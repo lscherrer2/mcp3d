@@ -11,3 +11,6 @@ wheels/
 
 # Runtime CAD artifacts
 .mcp3d/
+
+# LLM Artifacts
+.serena/
