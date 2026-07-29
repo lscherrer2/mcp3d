@@ -1,0 +1,65 @@
+"""Application data retained between revisioned CAD operations."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class SketchRecord:
+    """Named sketch state retained for downstream features and inspection."""
+
+    identifier: str
+    plane: Any
+    entities: dict[str, Any]
+    external: dict[str, Any]
+    profile: Any | None = None
+    points: dict[str, tuple[float, float]] = field(default_factory=dict)
+    solver: dict[str, Any] | None = None
+    dimension_labels: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BuildResult:
+    """Result of compiling a recipe into a Build123d part."""
+
+    shape: Any
+    sketches: dict[str, SketchRecord] = field(default_factory=dict)
+
+
+@dataclass
+class Revision:
+    """One immutable, successfully compiled single-part revision."""
+
+    number: int
+    recipe: dict[str, Any]
+    requirements: dict[str, Any]
+    shape: Any
+    sketches: dict[str, SketchRecord] = field(default_factory=dict)
+
+
+@dataclass
+class Part:
+    """In-memory history for one named part."""
+
+    part_id: str
+    revisions: list[Revision] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RenderedImage:
+    """A renderer-neutral image held only for the current MCP response."""
+
+    name: str
+    data: bytes
+    format: str = "png"
+
+
+@dataclass
+class OperationResult:
+    """Application response before the MCP adapter turns it into content blocks."""
+
+    data: dict[str, Any]
+    images: list[RenderedImage] = field(default_factory=list)
+    is_error: bool = False

@@ -1,0 +1,22 @@
+[project]
+name = "mcp3d"
+version = "0.1.0"
+description = "A local MCP server for parametric, manufacturing-focused CAD workflows"
+authors = [
+    { name = "Luke Scherrer", email = "lukescherrer2@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "build123d>=0.11.1",
+    "fastmcp>=3.4.5",
+    "pyvista>=0.48.4",
+    "resvg-py>=0.3.3",
+    "scipy>=1.18.0",
+]
+
+[project.scripts]
+mcp3d = "mcp3d:main"
+
+[build-system]
+requires = ["uv_build>=0.8.22,<0.9.0"]
+build-backend = "uv_build"
