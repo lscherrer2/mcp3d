@@ -5,18 +5,18 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 
-from ..models import RenderedImage, Revision
+from ..models import RenderedImage
 
 
-def render_pyvista_views(revision: Revision, views: list[str]) -> list[RenderedImage]:
+def render_pyvista_views(shape: Any, views: list[str]) -> list[RenderedImage]:
     """Render a tessellated B-rep with shaded faces and feature edges."""
     import numpy as np
     import pyvista as pv
 
-    box = revision.shape.bounding_box()
+    box = shape.bounding_box()
     maximum_dimension = max(box.size.X, box.size.Y, box.size.Z)
     tolerance = min(max(maximum_dimension / 500, 0.05), 0.5)
-    vertices, triangles = revision.shape.tessellate(tolerance)
+    vertices, triangles = shape.tessellate(tolerance)
     points = np.asarray([(vertex.X, vertex.Y, vertex.Z) for vertex in vertices], dtype=np.float64)
     faces = np.asarray([[3, *triangle] for triangle in triangles], dtype=np.int64).ravel()
     mesh = pv.PolyData(points, faces, deep=True)

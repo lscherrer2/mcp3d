@@ -13,11 +13,11 @@ import resvg_py
 from ..models import RenderedImage, Revision, SketchRecord
 
 
-def render_technical_views(revision: Revision, views: list[str]) -> list[RenderedImage]:
+def render_technical_views(shape: Any, views: list[str]) -> list[RenderedImage]:
     """Render deterministic technical projections when PyVista is unavailable."""
     images = []
     for view in views:
-        images.append(RenderedImage(view, rasterize_svg(part_svg(revision.shape, view))))
+        images.append(RenderedImage(view, rasterize_svg(part_svg(shape, view))))
     return images
 
 

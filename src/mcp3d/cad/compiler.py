@@ -9,10 +9,15 @@ from build123d import Align, Box, Edge, Plane
 
 from ..errors import Mcp3dError
 from ..models import BuildResult, SketchRecord
-from ..recipe import RecipeValues
+from ..recipe import FeatureGraphRecipe, FeatureOperation, RecipeValues
+from .connectors import compile_mate_connectors
 from .datums import build_datum_plane
-from .features import apply_finishing_feature, apply_pattern, build_profile_feature, combine_tool
-from .legacy import compile_legacy
+from .features import (
+    apply_finishing_feature,
+    apply_pattern,
+    build_profile_feature,
+    combine_tool,
+)
 from .sketches import SketchCompiler
 
 
@@ -29,12 +34,10 @@ class BuildContext:
 
 
 class FeatureGraphCompiler:
-    """Compile either supported recipe dialect into one valid Build123d part."""
+    """Compile one parsed feature graph into a valid Build123d part."""
 
-    def compile(self, recipe: dict[str, Any]) -> BuildResult:
+    def compile(self, recipe: FeatureGraphRecipe) -> BuildResult:
         try:
-            if "operations" not in recipe:
-                return compile_legacy(recipe)
             return self._compile_feature_graph(recipe)
         except Mcp3dError:
             raise
@@ -45,30 +48,25 @@ class FeatureGraphCompiler:
                 ["Inspect the affected sketch/profile or reduce feature dimensions, then revise the recipe."],
             ) from error
 
-    def _compile_feature_graph(self, recipe: dict[str, Any]) -> BuildResult:
-        if recipe.get("units", "mm") != "mm":
-            raise Mcp3dError("UNSUPPORTED_UNITS", "Feature-graph recipes accept millimetres only; set units to 'mm'.")
-        operations = recipe.get("operations")
-        if not isinstance(operations, list) or not operations:
-            raise Mcp3dError("OPERATIONS_REQUIRED", "A feature-graph recipe needs a non-empty operations list.")
-        values = RecipeValues(recipe.get("parameters", {}))
+    def _compile_feature_graph(self, recipe: FeatureGraphRecipe) -> BuildResult:
+        values = RecipeValues(recipe.parameters, recipe.units)
         sketches = SketchCompiler(values)
         context = BuildContext()
-        for operation in operations:
+        for operation in recipe.operations:
             self._apply_operation(operation, context, values, sketches)
         if context.shape is None or not context.shape.is_valid or len(context.shape.solids()) != 1:
             raise Mcp3dError("INVALID_SOLID", "The feature graph did not produce exactly one valid solid.")
-        return BuildResult(shape=context.shape, sketches=context.sketches)
+        return BuildResult(shape=context.shape, sketches=context.sketches, mate_connectors=compile_mate_connectors(recipe.mate_connectors, context.planes, values))
 
     def _apply_operation(
         self,
-        operation: dict[str, Any],
+        operation: FeatureOperation,
         context: BuildContext,
         values: RecipeValues,
         sketches: SketchCompiler,
     ) -> None:
-        identifier, kind = operation.get("id"), operation.get("kind")
-        if not isinstance(identifier, str) or not identifier or identifier in context.identifiers:
+        identifier, kind = operation.identifier, operation.kind
+        if identifier in context.identifiers:
             raise Mcp3dError("INVALID_FEATURE_ID", "Every operation requires a unique, non-empty id.")
         context.identifiers.add(identifier)
         if kind == "box":
@@ -98,11 +96,11 @@ class FeatureGraphCompiler:
             raise Mcp3dError("BASE_REQUIRED", f"A {kind} needs an existing base solid.")
 
     @staticmethod
-    def _build_box(operation: dict[str, Any], context: BuildContext, values: RecipeValues) -> None:
-        identifier = operation["id"]
+    def _build_box(operation: FeatureOperation, context: BuildContext, values: RecipeValues) -> None:
+        identifier = operation.identifier
         if context.shape is not None:
             raise Mcp3dError("BASE_ORDER", "A box base must be the first solid-producing operation.")
-        length, width, height = (values.number(operation.get(key), f"{identifier}.{key}") for key in ("length", "width", "height"))
+        length, width, height = (values.length(operation.get(key), f"{identifier}.{key}") for key in ("length", "width", "height"))
         if min(length, width, height) <= 0:
             raise Mcp3dError("INVALID_DIMENSION", "Box dimensions must be positive.")
         context.shape = Box(length, width, height, align=(Align.MIN, Align.MIN, Align.MIN))

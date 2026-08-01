@@ -30,14 +30,18 @@ The authoritative source for the runtime documentation is
 [`tool_docs.py`](src/mcp3d/tool_docs.py). This keeps the model-facing guidance
 versioned with the actual server implementation.
 
-For new work, prefer the v1 feature graph below. The v0 box/through-hole form
-remains only for backwards compatibility.
-
-## v0 interface
-
-- `part.apply` creates or revises an immutable single-part revision.
+- `part.apply` creates or revises an immutable single-part revision. A server
+  session can hold many independent `part_id` histories.
 - `part.analyze` returns structured checks and PNG orthographic/isometric views.
 - `part.export` writes STEP and/or STL artifacts.
+- `session.list_parts` lists the current independent part heads.
+- `session.preview_parts` renders selected independent parts side-by-side for
+  comparison only; it does not create assembly or placement state.
+- `assembly.apply` creates a revision-pinned arrangement of part occurrences
+  using named connector frames, grounding, and rigid fastened mates.
+- `assembly.analyze` inspects a saved assembly revision and reports solved
+  poses, mate residuals, free components, and exact checks.
+- `session.list_assemblies` lists the current assembly heads.
 
 Views use shaded PyVista/VTK rendering with feature edges. If a local machine
 cannot create an off-screen OpenGL context, the server automatically falls back
@@ -53,8 +57,48 @@ renderer. Normal local use remains PyVista-first.
 or `render: {"views":[]}` when structured checks are sufficient. Use
 `part.analyze` for additional views after the initial revision.
 
-The legacy v0 form supports a `box` base plus named `through_holes` features.
-All dimensions are millimetres.
+## Units
+
+Recipes may declare `units` as `mm`, `cm`, `m`, or `in` (`inch` and `inches`
+are aliases). All dimensional recipe inputs use that unit; angles remain in
+degrees, while direction vectors and counts are unitless. Geometry is evaluated
+in millimeters internally. Reports provide declared-unit values in
+`summary.bounding_box` and `summary.volume`, while retaining explicit
+millimeter fields for downstream tooling.
+
+## Assemblies
+
+Part recipes may expose reusable part-local `mate_connectors`. A connector is
+an explicit orthonormal frame or a frame based on a named part plane. An
+assembly then references fixed part revisions through occurrence IDs, grounds
+one occurrence per rigidly connected component, and joins connectors with
+`fastened` mates. A successful assembly report contains the pinned part
+revisions, resolved poses, and exact mate residuals.
+
+The first assembly interface intentionally supports rigid placement only.
+Revolute, slider, cylindrical, planar, and ball mates—and general numerical
+closed-loop solving—remain future additions. `session.preview_parts` remains a
+separate display-only option when no assembly relationship is intended.
+
+## Local session dashboard
+
+When `mcp3d` starts, it also serves a local React dashboard at
+[`http://127.0.0.1:8765`](http://127.0.0.1:8765). It is a read-only observer
+for the active MCP process: the main panel shows the latest retained render and
+the sidebar streams apply, revision, inspection, export, and error milestones.
+It displays observable CAD activity, not private model reasoning.
+
+All dashboard state is bounded and memory-only: the latest 80 events and 16
+render images are retained for the life of the server process, then discarded.
+No dashboard images are written to `.mcp3d`.
+
+Set `MCP3D_DASHBOARD_PORT` to choose a different local port, or to `0`/`off`
+to disable the dashboard:
+
+```bash
+MCP3D_DASHBOARD_PORT=9000 uv run mcp3d
+MCP3D_DASHBOARD_PORT=off uv run mcp3d
+```
 
 ## Implementation architecture
 
@@ -79,10 +123,7 @@ the MCP response and do not create files in `.mcp3d`. The server creates
 `.mcp3d/artifacts/<part>/r<revision>/` only when `part.export` is explicitly
 called, and that directory contains the requested STEP and/or STL deliverables.
 
-`workspace.py` remains as a small backwards-compatible shim for early callers;
-new internal code should use `PartService` and `FeatureGraphCompiler` directly.
-
-## v1.1 feature graph
+## Feature graph
 
 `part.apply` also accepts a recipe with named `operations`. The implemented
 workflow is:
@@ -106,7 +147,7 @@ that incorporate named sketch entities. Request a sketch diagnostic with:
 Alongside direct `line` and deterministic `tangent_arc` geometry, a sketch can
 contain a `constraint_graph`. It owns named `point`, `line`, and `circle`
 entities; the solver materializes its lines/circles before ordinary sketch
-geometry is built. Coordinates are in the sketch plane's local millimetres.
+geometry is built. Coordinates are in the sketch plane's local declared units.
 
 ```json
 {

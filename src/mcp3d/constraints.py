@@ -33,12 +33,19 @@ class ConstraintGraphSolver:
     def __init__(
         self,
         graph: dict[str, Any],
-        number: Callable[[Any], float],
+        number: Callable[[Any], float] | None = None,
         *,
+        length: Callable[[Any], float] | None = None,
+        angle: Callable[[Any], float] | None = None,
+        scalar: Callable[[Any], float] | None = None,
         external_lines: dict[str, tuple[tuple[float, float], tuple[float, float]]] | None = None,
     ) -> None:
         self.graph = graph
-        self.number = number
+        if number is None and (length is None or angle is None or scalar is None):
+            raise TypeError("ConstraintGraphSolver needs either number or length, angle, and scalar resolvers.")
+        self.length = length or number  # type: ignore[assignment]
+        self.angle = angle or number  # type: ignore[assignment]
+        self.scalar = scalar or number  # type: ignore[assignment]
         self.external_lines = external_lines or {}
         self.points: dict[str, tuple[float, float]] = {}
         self.lines: dict[str, tuple[str, str]] = {}
@@ -58,9 +65,9 @@ class ConstraintGraphSolver:
         if solver is not None and not isinstance(solver, dict):
             raise ConstraintGraphError("constraint_graph.solver must be an object when provided.")
         solver = solver or {}
-        self.linear_tolerance = self.number(solver.get("linear_tolerance_mm", 1e-5))
-        self.angular_tolerance_deg = self.number(solver.get("angular_tolerance_deg", 1e-4))
-        self.max_nfev = int(self.number(solver.get("max_nfev", 500)))
+        self.linear_tolerance = self.scalar(solver.get("linear_tolerance_mm", 1e-5))
+        self.angular_tolerance_deg = self.scalar(solver.get("angular_tolerance_deg", 1e-4))
+        self.max_nfev = int(self.scalar(solver.get("max_nfev", 500)))
         if self.linear_tolerance <= 0 or self.angular_tolerance_deg <= 0 or self.max_nfev < 1:
             raise ConstraintGraphError("Solver tolerances and max_nfev must be positive.")
         self.length_scale = self._characteristic_length()
@@ -118,7 +125,7 @@ class ConstraintGraphSolver:
                 at = entity.get("position", entity.get("at"))
                 if not isinstance(at, list | tuple) or len(at) != 2:
                     raise ConstraintGraphError(f"Point {identifier!r} requires an initial [x, y] position.")
-                self.points[identifier] = (self.number(at[0]), self.number(at[1]))
+                self.points[identifier] = (self.length(at[0]), self.length(at[1]))
             elif kind == "line":
                 start, end = entity.get("start"), entity.get("end")
                 if start not in self.points or end not in self.points:
@@ -127,7 +134,7 @@ class ConstraintGraphSolver:
                     raise ConstraintGraphError(f"Line {identifier!r} needs distinct start and end points.")
                 self.lines[identifier] = (start, end)
             elif kind == "circle":
-                center, radius = entity.get("center"), self.number(entity.get("radius"))
+                center, radius = entity.get("center"), self.length(entity.get("radius"))
                 if center not in self.points or radius <= 0:
                     raise ConstraintGraphError(f"Circle {identifier!r} requires an existing center point and positive radius.")
                 self.circles[identifier] = (center, radius)
@@ -219,20 +226,20 @@ class ConstraintGraphSolver:
                 return [(cross, "ratio")]
             if kind == "perpendicular":
                 return [(dot, "ratio")]
-            desired = self.number(constraint.get("value_deg", constraint.get("value"))) * pi / 180
+            desired = self.angle(constraint.get("value_deg", constraint.get("value"))) * pi / 180
             if constraint.get("side") == "cw":
                 desired = -desired
             return [(self._wrap_angle(atan2(cross, dot) - desired), "deg")]
         if kind == "distance":
             first, second = self._point_pair(constraint, points, kind)
-            return [(float(np.linalg.norm(first - second) - self.number(constraint.get("value"))), "mm")]
+            return [(float(np.linalg.norm(first - second) - self.length(constraint.get("value"))), "mm")]
         if kind == "equal_length":
             first, second = self._line_pair(constraint, points, kind)
             return [(float(np.linalg.norm(first[1] - first[0]) - np.linalg.norm(second[1] - second[0])), "mm")]
         if kind in {"radius", "diameter"}:
             target = self._target(constraint, kind)
             radius = self._circle(target, points, radii)[1]
-            value = self.number(constraint.get("value")) / (2 if kind == "diameter" else 1)
+            value = self.length(constraint.get("value")) / (2 if kind == "diameter" else 1)
             return [(radius - value, "mm")]
         if kind == "equal_radius":
             first, second = self._circle_pair(constraint, points, radii, kind)
@@ -329,7 +336,7 @@ class ConstraintGraphSolver:
             if isinstance(constraint, dict) and constraint.get("kind") in {"distance", "radius", "diameter"}:
                 value = constraint.get("value")
                 if isinstance(value, (int, float)) and value > 0:
-                    lengths.append(float(value))
+                    lengths.append(self.length(value))
         return max(float(np.median(lengths)) if lengths else 1.0, 1.0)
 
     @staticmethod

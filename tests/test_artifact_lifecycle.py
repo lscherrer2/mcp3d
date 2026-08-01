@@ -8,10 +8,24 @@ import unittest
 from unittest.mock import patch
 
 from mcp3d.application import PartService
-from tests.recipes import LEGACY_RECIPE
+from tests.recipes import FEATURE_GRAPH_RECIPE
 
 
 class ArtifactLifecycleTests(unittest.TestCase):
+    def test_export_cannot_escape_the_configured_artifact_root(self) -> None:
+        with TemporaryDirectory() as directory:
+            service = PartService(artifact_root=Path(directory) / "artifacts")
+            result = service.apply(
+                part_id="../escaped",
+                recipe=FEATURE_GRAPH_RECIPE,
+                patch=None,
+                base_revision=None,
+                requirements=None,
+                render={"views": []},
+            )
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.data["code"], "INVALID_PART_ID")
+
     def test_rendering_is_ephemeral_and_export_is_durable(self) -> None:
         with TemporaryDirectory() as directory, patch.dict("os.environ", {"MCP3D_RENDERER": "technical"}):
             artifact_root = Path(directory) / "artifacts"
@@ -19,7 +33,7 @@ class ArtifactLifecycleTests(unittest.TestCase):
 
             created = service.apply(
                 part_id="ephemeral_images",
-                recipe=LEGACY_RECIPE,
+                recipe=FEATURE_GRAPH_RECIPE,
                 patch=None,
                 base_revision=None,
                 requirements=None,

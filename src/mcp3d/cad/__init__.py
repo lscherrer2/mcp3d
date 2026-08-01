@@ -2,4 +2,5 @@
 
 from .compiler import FeatureGraphCompiler
 
+
 __all__ = ["FeatureGraphCompiler"]

@@ -4,12 +4,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from build123d import BuildLine, BuildSketch, ConstrainedArcs, Edge, Face, Plane, Polyline, Sagitta, Wire, make_face
+from build123d import (
+    BuildLine,
+    BuildSketch,
+    ConstrainedArcs,
+    Edge,
+    Face,
+    Plane,
+    Polyline,
+    Sagitta,
+    Wire,
+    make_face,
+)
 
 from ..constraints import ConstraintGraphError, ConstraintGraphSolver
 from ..errors import Mcp3dError
 from ..models import SketchRecord
-from ..recipe import RecipeValues
+from ..recipe import FeatureOperation, RecipeValues
 
 
 class SketchCompiler:
@@ -18,8 +29,8 @@ class SketchCompiler:
     def __init__(self, values: RecipeValues) -> None:
         self.values = values
 
-    def compile(self, operation: dict[str, Any], planes: dict[str, Any], references: dict[str, Any]) -> SketchRecord:
-        identifier = operation["id"]
+    def compile(self, operation: FeatureOperation, planes: dict[str, Any], references: dict[str, Any]) -> SketchRecord:
+        identifier = operation.identifier
         plane_id = operation.get("plane", "XY")
         plane = Plane.XY if plane_id == "XY" else planes.get(plane_id)
         if plane is None:
@@ -44,7 +55,7 @@ class SketchCompiler:
             self._dimension_labels(graph, identifier),
         )
 
-    def _external_geometry(self, operation: dict[str, Any], plane: Any, references: dict[str, Any], sketch_id: str) -> dict[str, Any]:
+    def _external_geometry(self, operation: FeatureOperation, plane: Any, references: dict[str, Any], sketch_id: str) -> dict[str, Any]:
         external: dict[str, Any] = {}
         for item in operation.get("external", []):
             external_id, source = item.get("id"), item.get("source")
@@ -60,7 +71,7 @@ class SketchCompiler:
 
     def _constraint_geometry(
         self,
-        operation: dict[str, Any],
+        operation: FeatureOperation,
         graph: Any,
         external: dict[str, Any],
         sketch_id: str,
@@ -74,7 +85,9 @@ class SketchCompiler:
         try:
             solver = ConstraintGraphSolver(
                 graph,
-                lambda value: self.values.number(value, f"{sketch_id}.constraint_graph"),
+                length=lambda value: self.values.length(value, f"{sketch_id}.constraint_graph"),
+                angle=lambda value: self.values.angle(value, f"{sketch_id}.constraint_graph"),
+                scalar=lambda value: self.values.scalar(value, f"{sketch_id}.constraint_graph"),
                 external_lines=external_lines,
             )
             solution = solver.solve()
@@ -107,7 +120,7 @@ class SketchCompiler:
                 entities[entity_id] = Edge.make_circle(solution.radii[entity_id], Plane((center[0], center[1], 0)))
         return entities, solution.points, diagnostics
 
-    def _direct_geometry(self, operation: dict[str, Any], entities: dict[str, Any], external: dict[str, Any], sketch_id: str) -> None:
+    def _direct_geometry(self, operation: FeatureOperation, entities: dict[str, Any], external: dict[str, Any], sketch_id: str) -> None:
         for item in operation.get("geometry", []):
             entity_id, kind = item.get("id"), item.get("kind")
             if not isinstance(entity_id, str) or not entity_id or entity_id in entities or entity_id in external:
@@ -124,7 +137,7 @@ class SketchCompiler:
                 available = {**external, **entities}
                 if any(guide not in available for guide in guides):
                     raise Mcp3dError("REFERENCE_NOT_FOUND", f"{entity_id} references an unknown guide.")
-                radius = self.values.number(item.get("radius"), f"{entity_id}.radius")
+                radius = self.values.length(item.get("radius"), f"{entity_id}.radius")
                 if radius <= 0:
                     raise Mcp3dError("INVALID_DIMENSION", f"{entity_id}.radius must be positive.")
                 span = item.get("solution", {}).get("span", "short")
@@ -207,18 +220,20 @@ class SketchCompiler:
             return []
         labels = []
         for position, constraint in enumerate(graph.get("constraints", [])):
-            if not isinstance(constraint, dict) or constraint.get("kind") not in {"distance", "radius", "diameter", "angle"}:
+            if not isinstance(constraint, dict):
+                continue
+            kind = constraint.get("kind")
+            if kind not in {"distance", "radius", "diameter", "angle"}:
                 continue
             value = constraint.get("value_deg", constraint.get("value"))
             if value is None:
                 continue
             try:
-                numeric = self.values.number(value, f"{sketch_id}.constraint")
+                numeric = self.values.angle(value, f"{sketch_id}.constraint") if kind == "angle" else self.values.scalar(value, f"{sketch_id}.constraint")
             except Mcp3dError:
                 continue
-            kind = constraint["kind"]
             identifier = constraint.get("id", f"constraint_{position + 1}")
-            unit = "°" if kind == "angle" else "mm"
+            unit = "°" if kind == "angle" else self.values.units
             prefix = {"distance": "D", "radius": "R", "diameter": "Ø", "angle": "∠"}[kind]
             labels.append(f"{identifier}: {prefix}{numeric:g} {unit}")
         return labels

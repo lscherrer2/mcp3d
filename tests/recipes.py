@@ -1,16 +1,10 @@
 """Reusable recipe fixtures for MCP, compiler, and application tests."""
 
-LEGACY_RECIPE = {
+FEATURE_GRAPH_RECIPE = {
     "units": "mm",
     "parameters": {"length": 100, "width": 60, "height": 6, "hole_diameter": 5.5},
-    "base": {"kind": "box", "length": "$length", "width": "$width", "height": "$height"},
-    "features": [
-        {
-            "id": "mounting_holes",
-            "kind": "through_holes",
-            "diameter": "$hole_diameter",
-            "centers": [[8, 8], [92, 8], [8, 52], [92, 52]],
-        }
+    "operations": [
+        {"id": "base", "kind": "box", "length": "$length", "width": "$width", "height": "$height"},
     ],
 }
 

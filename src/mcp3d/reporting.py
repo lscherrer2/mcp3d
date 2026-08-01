@@ -62,16 +62,21 @@ def validate_views(views: Any) -> list[str]:
 def report(part_id: str, revision: Revision, assertions: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the stable structured report returned from apply/analyze."""
     box = revision.shape.bounding_box()
-    dimensions = [round(value, 6) for value in (box.size.X, box.size.Y, box.size.Z)]
+    dimensions_mm = [round(value, 6) for value in (box.size.X, box.size.Y, box.size.Z)]
+    scale = {"mm": 1.0, "cm": 10.0, "m": 1000.0, "in": 25.4}[revision.recipe.units]
+    dimensions = [round(value / scale, 6) for value in dimensions_mm]
+    volume_mm3 = round(revision.shape.volume, 6)
     checks = [check(revision, item, dimensions) for item in assertions]
     return {
         "status": "verified" if all(item["status"] == "pass" for item in checks) else "needs_revision",
         "part_id": part_id,
         "revision": revision.number,
-        "units": "mm",
+        "units": revision.recipe.units,
         "summary": {
-            "bounding_box_mm": dimensions,
-            "volume_mm3": round(revision.shape.volume, 6),
+            "bounding_box": dimensions,
+            "volume": round(volume_mm3 / scale**3, 6),
+            "bounding_box_mm": dimensions_mm,
+            "volume_mm3": volume_mm3,
             "solid_count": len(revision.shape.solids()),
             "valid_solid": revision.shape.is_valid,
         },
@@ -88,7 +93,11 @@ def report(part_id: str, revision: Revision, assertions: list[dict[str, Any]]) -
             }
             for sketch in revision.sketches.values()
         ],
-        "recipe": revision.recipe,
+        "mate_connectors": [
+            {"id": identifier, "frame": frame.as_dict()}
+            for identifier, frame in revision.mate_connectors.items()
+        ],
+        "recipe": revision.recipe.to_dict(),
     }
 
 
@@ -99,13 +108,6 @@ def check(revision: Revision, criterion: dict[str, Any], dimensions: list[float]
         actual, expected = revision.shape.is_valid and len(revision.shape.solids()) == 1, criterion.get("expected", True)
     elif kind == "bounding_box":
         actual, expected = dimensions, criterion.get("expected")
-    elif kind == "hole_count":
-        actual = sum(
-            len(item.get("centers", []))
-            for item in revision.recipe.get("features", [])
-            if item.get("kind") == "through_holes"
-        )
-        expected = criterion.get("expected")
     else:
         return {"id": identifier, "kind": kind, "status": "not_evaluated", "reason": "Unsupported assertion."}
     passed = actual == expected if kind != "bounding_box" else actual == [float(value) for value in expected]

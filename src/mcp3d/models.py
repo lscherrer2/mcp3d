@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .assembly import Frame
+from .identity import PartId
+from .recipe import FeatureGraphRecipe
+
 
 @dataclass
 class SketchRecord:
@@ -26,6 +30,7 @@ class BuildResult:
 
     shape: Any
     sketches: dict[str, SketchRecord] = field(default_factory=dict)
+    mate_connectors: dict[str, Frame] = field(default_factory=dict)
 
 
 @dataclass
@@ -33,17 +38,18 @@ class Revision:
     """One immutable, successfully compiled single-part revision."""
 
     number: int
-    recipe: dict[str, Any]
+    recipe: FeatureGraphRecipe
     requirements: dict[str, Any]
     shape: Any
     sketches: dict[str, SketchRecord] = field(default_factory=dict)
+    mate_connectors: dict[str, Frame] = field(default_factory=dict)
 
 
 @dataclass
 class Part:
     """In-memory history for one named part."""
 
-    part_id: str
+    part_id: PartId
     revisions: list[Revision] = field(default_factory=list)
 
 
@@ -54,6 +60,15 @@ class RenderedImage:
     name: str
     data: bytes
     format: str = "png"
+
+
+@dataclass(frozen=True)
+class RenderedMesh:
+    """Compact, in-memory triangle mesh retained for an interactive observer."""
+
+    data: bytes
+    vertex_count: int
+    triangle_count: int
 
 
 @dataclass

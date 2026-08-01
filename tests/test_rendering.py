@@ -6,8 +6,8 @@ import os
 import unittest
 
 from build123d import Box
-
 from mcp3d.models import Revision
+from mcp3d.recipe import parse_recipe
 from mcp3d.rendering import RenderService
 
 
@@ -16,7 +16,8 @@ class RenderServiceTests(unittest.TestCase):
         original = os.environ.get("MCP3D_RENDERER")
         os.environ["MCP3D_RENDERER"] = "technical"
         try:
-            revision = Revision(1, {}, {}, Box(10, 8, 6))
+            recipe = parse_recipe({"operations": [{"id": "base", "kind": "box", "length": 10, "width": 8, "height": 6}]})
+            revision = Revision(1, recipe, {}, Box(10, 8, 6))
             renderer, images = RenderService().render_part(revision, ["isometric"])
             self.assertEqual(renderer, "technical")
             self.assertEqual(images[0].name, "isometric")
