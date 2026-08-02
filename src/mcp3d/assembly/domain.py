@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 from ..identity import AssemblyId, PartId
+from ..immutability import freeze
 from ..recipe import length_scale_mm
 from .frames import Frame
 
@@ -89,23 +90,30 @@ class AssemblyDefinition:
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class AssemblyBuildResult:
     """Solved assembly evidence retained with an immutable assembly revision."""
 
     shape: Any
-    poses: dict[str, Frame]
-    diagnostics: dict[str, Any]
+    poses: Mapping[str, Frame]
+    diagnostics: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "poses", freeze(self.poses))
+        object.__setattr__(self, "diagnostics", freeze(self.diagnostics))
 
 
-@dataclass
+@dataclass(frozen=True)
 class AssemblyRevision:
     """One successfully solved, immutable assembly revision."""
 
     number: int
     definition: AssemblyDefinition
-    requirements: dict[str, Any]
+    requirements: Mapping[str, Any]
     build: AssemblyBuildResult
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "requirements", freeze(self.requirements))
 
 
 @dataclass

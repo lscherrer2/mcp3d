@@ -2,21 +2,32 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import copy
+import os
+from pathlib import Path
 from typing import Any
 
+from ..artifacts import export_assembly_revision, package_assembly_revision
 from ..assembly.composer import (
     AssemblyComposer,
     apply_changes,
     parse_definition,
 )
-from ..assembly.domain import Assembly, AssemblyRevision
+from ..assembly.domain import AssemblyRevision
+from ..assembly.snapshots import export_snapshot
 from ..errors import Mcp3dError
-from ..identity import AssemblyId
-from ..models import OperationResult, RenderedImage
+from ..identity import AssemblyId, PartId
+from ..immutability import thaw
+from ..models import OperationResult, RenderedImage, Revision
 from ..recipe import length_scale_mm
 from ..rendering import RenderService
-from ..reporting import DEFAULT_ANALYZE_VIEWS, apply_views, requested_views
+from ..reporting import (
+    DEFAULT_ANALYZE_VIEWS,
+    apply_views,
+    requested_views,
+    validate_assembly_requirements,
+)
 from .observation import OperationMilestone, OperationObserver
 from .store import InMemoryPartStore
 
@@ -28,10 +39,13 @@ class AssemblyService:
         self,
         *,
         store: InMemoryPartStore,
+        artifact_root: Path | None = None,
         composer: AssemblyComposer | None = None,
         renderer: RenderService | None = None,
         observer: OperationObserver | None = None,
     ) -> None:
+        root = artifact_root or Path(os.environ.get("MCP3D_ARTIFACT_DIR", ".mcp3d/artifacts"))
+        self.artifact_root = root.resolve()
         self.store = store
         self.composer = composer or AssemblyComposer()
         self.renderer = renderer or RenderService()
@@ -146,6 +160,42 @@ class AssemblyService:
         """Expose immutable revision lookup to future assembly workflows."""
         return self.store.get_assembly_revision(assembly_id, revision)
 
+    def export(self, *, assembly_id: str, revision: int | None, formats: list[str] | None) -> dict[str, Any]:
+        """Export a fully constrained assembly as a solved geometry snapshot."""
+        self._record("export", "started", assembly_id, revision, message="Preparing assembly geometry export.")
+        try:
+            parsed_id = AssemblyId.parse(assembly_id)
+            selected = self.get_revision(parsed_id, revision)
+            self._require_exportable(selected)
+            self._record("export", "writing", parsed_id.value, selected.number, message="Writing solved assembly deliverables.")
+            payload = export_assembly_revision(parsed_id, export_snapshot(selected), self.artifact_root, formats)
+            self._record("export", "completed", parsed_id.value, selected.number, status="ok", message=f"Exported assembly r{selected.number}.", result=payload)
+            return payload
+        except Mcp3dError as error:
+            self._record("export", "failed", assembly_id, revision, status="error", message=error.message, result=error.as_dict())
+            raise
+
+    def package(self, *, assembly_id: str, revision: int | None, formats: list[str] | None) -> dict[str, Any]:
+        """Create a portable ZIP handoff for a fully constrained assembly."""
+        self._record("package", "started", assembly_id, revision, message="Preparing portable assembly handoff.")
+        try:
+            parsed_id = AssemblyId.parse(assembly_id)
+            selected = self.get_revision(parsed_id, revision)
+            self._require_exportable(selected)
+            self._record("package", "writing", parsed_id.value, selected.number, message="Writing recipes and geometry snapshots into a package.")
+            payload = package_assembly_revision(
+                parsed_id,
+                export_snapshot(selected),
+                self._pinned_part_revisions(selected),
+                self.artifact_root,
+                formats,
+            )
+            self._record("package", "completed", parsed_id.value, selected.number, status="ok", message=f"Packaged assembly r{selected.number}.", result=payload)
+            return payload
+        except Mcp3dError as error:
+            self._record("package", "failed", assembly_id, revision, status="error", message=error.message, result=error.as_dict())
+            raise
+
     def _apply(
         self,
         assembly_id: AssemblyId,
@@ -162,7 +212,7 @@ class AssemblyService:
                 raise Mcp3dError("ASSEMBLY_DEFINITION_REQUIRED", "A new assembly requires a complete definition.")
             if base_revision is not None:
                 raise Mcp3dError("REVISION_CONFLICT", "A new assembly cannot specify base_revision.")
-            candidate, inherited_requirements, assembly = copy.deepcopy(definition), {}, Assembly(assembly_id)
+            candidate, inherited_requirements = copy.deepcopy(definition), {}
         else:
             head = existing.revisions[-1]
             if base_revision != head.number:
@@ -173,22 +223,39 @@ class AssemblyService:
                 candidate = apply_changes(head.definition, changes)
             else:
                 raise Mcp3dError("EDIT_REQUIRED", "Supply an assembly definition or changes when revising an assembly.")
-            inherited_requirements, assembly = copy.deepcopy(head.requirements), existing
+            inherited_requirements = thaw(head.requirements)
         if requirements is not None:
-            if not isinstance(requirements, dict):
-                raise Mcp3dError("INVALID_REQUIREMENTS", "requirements must be an object when supplied.")
-            inherited_requirements = copy.deepcopy(requirements)
+            inherited_requirements = copy.deepcopy(validate_assembly_requirements(requirements))
         parsed_definition = parse_definition(candidate, self.store.get_revision)
         build = self.composer.compile(parsed_definition, self.store.get_revision)
-        revision = AssemblyRevision(len(assembly.revisions) + 1, parsed_definition, inherited_requirements, build)
-        assembly.revisions.append(revision)
-        self.store.save_assembly(assembly)
-        return revision
+        pending = AssemblyRevision(0, parsed_definition, inherited_requirements, build)
+        return self.store.commit_assembly_revision(assembly_id, base_revision, pending)
 
     def _render(self, revision: AssemblyRevision, views: list[str]) -> tuple[str, list[RenderedImage]]:
         if not views:
             return "none", []
         return self.renderer.render_shape(revision.build.shape, views)
+
+    @staticmethod
+    def _require_exportable(revision: AssemblyRevision) -> None:
+        if revision.build.diagnostics["status"] != "fully_constrained":
+            raise Mcp3dError(
+                "ASSEMBLY_NOT_FULLY_CONSTRAINED",
+                "Export requires a fully constrained assembly revision.",
+                ["Ground one instance in each connected component and resolve all mate conflicts before exporting."],
+                {"status": revision.build.diagnostics["status"], "remaining_dof": revision.build.diagnostics["remaining_dof"]},
+            )
+
+    def _pinned_part_revisions(self, assembly: AssemblyRevision) -> list[tuple[PartId, Revision]]:
+        """Resolve each unique pinned part once for the package writer."""
+        resolved: list[tuple[PartId, Revision]] = []
+        seen: set[tuple[PartId, int]] = set()
+        for instance in assembly.definition.instances:
+            key = (instance.part.part_id, instance.part.revision)
+            if key not in seen:
+                resolved.append((instance.part.part_id, self.store.get_revision(*key)))
+                seen.add(key)
+        return resolved
 
     def _record(
         self,
@@ -246,7 +313,7 @@ def assembly_report(assembly_id: str, revision: AssemblyRevision, assertions: li
             "volume": round(shape.volume / scale**3, 6),
             "volume_mm3": round(shape.volume, 6),
         },
-        "solver": revision.build.diagnostics,
+        "solver": thaw(revision.build.diagnostics),
         "checks": checks,
         "instances": [
             {
@@ -262,7 +329,7 @@ def assembly_report(assembly_id: str, revision: AssemblyRevision, assertions: li
 
 def assembly_check(revision: AssemblyRevision, criterion: dict[str, Any], dimensions: list[float]) -> dict[str, Any]:
     """Evaluate the deliberately small exact-check vocabulary for assemblies."""
-    if not isinstance(criterion, dict):
+    if not isinstance(criterion, Mapping):
         return {"id": None, "kind": None, "status": "not_evaluated", "reason": "Assertions must be objects."}
     kind, identifier = criterion.get("kind"), criterion.get("id", criterion.get("kind"))
     if kind == "fully_constrained":
@@ -274,7 +341,12 @@ def assembly_check(revision: AssemblyRevision, criterion: dict[str, Any], dimens
     else:
         return {"id": identifier, "kind": kind, "status": "not_evaluated", "reason": "Unsupported assembly assertion."}
     if kind == "bounding_box":
-        passed = isinstance(expected, list) and actual == [float(value) for value in expected]
+        passed = (
+            isinstance(expected, list | tuple)
+            and len(expected) == 3
+            and all(isinstance(value, int | float) and not isinstance(value, bool) for value in expected)
+            and actual == [float(value) for value in expected]
+        )
     else:
         passed = actual == expected
-    return {"id": identifier, "kind": kind, "status": "pass" if passed else "fail", "expected": expected, "actual": actual}
+    return {"id": identifier, "kind": kind, "status": "pass" if passed else "fail", "expected": thaw(expected), "actual": actual}

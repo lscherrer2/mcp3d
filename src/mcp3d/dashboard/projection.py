@@ -124,7 +124,7 @@ class DashboardProjection:
         details = {
             key: copy.deepcopy(value)
             for key, value in (milestone.result or {}).items()
-            if key in {"summary", "checks", "renderer", "views", "artifacts", "code", "recovery"}
+            if key in {"summary", "checks", "renderer", "views", "artifacts", "package", "code", "recovery"}
         }
         if milestone.requested_views is not None:
             details["requested_views"] = list(milestone.requested_views)

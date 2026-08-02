@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 import unittest
 
 from mcp3d.application import PartService
 from mcp3d.cad import FeatureGraphCompiler
 from mcp3d.errors import Mcp3dError
+from mcp3d.identity import PartId
 from mcp3d.recipe import parse_recipe
 
 
@@ -62,3 +64,37 @@ class UnitConversionTests(unittest.TestCase):
                 recipe = parse_recipe({"units": alias, "operations": [{"id": "base", "kind": "box", "length": 1, "width": 1, "height": 1}]})
                 self.assertEqual(recipe.units, expected)
                 self.assertEqual(recipe.to_dict()["units"], expected)
+
+    def test_malformed_requirements_do_not_commit_a_part_revision(self) -> None:
+        service = PartService()
+        result = service.apply(
+            part_id="invalid_requirements",
+            recipe={"units": "mm", "operations": [{"id": "base", "kind": "box", "length": 1, "width": 1, "height": 1}]},
+            patch=None,
+            base_revision=None,
+            requirements={"assertions": [{"kind": "bounding_box", "expected": [1, "bad", 1]}]},
+            render={"views": []},
+        )
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.data["code"], "INVALID_REQUIREMENTS")
+        self.assertIsNone(service.store.get(PartId.parse("invalid_requirements")))
+
+    def test_committed_part_revision_metadata_is_read_only(self) -> None:
+        service = PartService()
+        created = service.apply(
+            part_id="immutable_part",
+            recipe={"operations": [{"id": "base", "kind": "box", "length": 1, "width": 1, "height": 1}]},
+            patch=None,
+            base_revision=None,
+            requirements={"assertions": [{"kind": "solid_valid"}]},
+            render={"views": []},
+        )
+        self.assertFalse(created.is_error, created.data)
+        revision = service.store.get_revision(PartId.parse("immutable_part"), 1)
+
+        with self.assertRaises(FrozenInstanceError):
+            revision.number = 2  # type: ignore[misc]
+        with self.assertRaises(TypeError):
+            revision.requirements["assertions"] = []  # type: ignore[index]
+        with self.assertRaises(TypeError):
+            revision.recipe.parameters["length"] = 2  # type: ignore[index]

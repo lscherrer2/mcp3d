@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 from .assembly import Frame
 from .identity import PartId
+from .immutability import freeze
 from .recipe import FeatureGraphRecipe
 
 
@@ -33,16 +34,22 @@ class BuildResult:
     mate_connectors: dict[str, Frame] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Revision:
     """One immutable, successfully compiled single-part revision."""
 
     number: int
     recipe: FeatureGraphRecipe
-    requirements: dict[str, Any]
+    requirements: Mapping[str, Any]
     shape: Any
-    sketches: dict[str, SketchRecord] = field(default_factory=dict)
-    mate_connectors: dict[str, Frame] = field(default_factory=dict)
+    sketches: Mapping[str, SketchRecord] = field(default_factory=dict)
+    mate_connectors: Mapping[str, Frame] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Prevent later revision edits through mutable mapping fields."""
+        object.__setattr__(self, "requirements", freeze(self.requirements))
+        object.__setattr__(self, "sketches", freeze(self.sketches))
+        object.__setattr__(self, "mate_connectors", freeze(self.mate_connectors))
 
 
 @dataclass

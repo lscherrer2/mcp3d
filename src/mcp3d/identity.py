@@ -78,3 +78,31 @@ class ArtifactLocation:
 
     def file(self, extension: str) -> Path:
         return self.directory / f"{self.revision}.{extension}"
+
+
+@dataclass(frozen=True)
+class AssemblyArtifactLocation:
+    """A verified, assembly-specific location for durable assembly exports."""
+
+    root: Path
+    assembly_id: AssemblyId
+    revision: int
+
+    @classmethod
+    def for_revision(cls, root: Path, assembly_id: AssemblyId, revision: int) -> "AssemblyArtifactLocation":
+        if revision < 1:
+            raise ValueError("revision must be positive")
+        trusted_root = root.resolve()
+        directory = (trusted_root / "assemblies" / assembly_id.value / f"r{revision}").resolve()
+        try:
+            directory.relative_to(trusted_root)
+        except ValueError as error:  # Defensive: AssemblyId currently makes this unreachable.
+            raise Mcp3dError("ARTIFACT_PATH_INVALID", "Assembly artifact location must remain inside the configured artifact root.") from error
+        return cls(trusted_root, assembly_id, revision)
+
+    @property
+    def directory(self) -> Path:
+        return self.root / "assemblies" / self.assembly_id.value / f"r{self.revision}"
+
+    def file(self, extension: str) -> Path:
+        return self.directory / f"{self.revision}.{extension}"

@@ -41,6 +41,10 @@ versioned with the actual server implementation.
   using named connector frames, grounding, and rigid fastened mates.
 - `assembly.analyze` inspects a saved assembly revision and reports solved
   poses, mate residuals, free components, and exact checks.
+- `assembly.export` writes a STEP and/or STL solved-geometry snapshot of a
+  fully constrained assembly.
+- `assembly.package` writes a portable ZIP containing the assembly definition,
+  pinned component recipes, and neutral geometry snapshots.
 - `session.list_assemblies` lists the current assembly heads.
 
 Views use shaded PyVista/VTK rendering with feature edges. If a local machine
@@ -79,6 +83,15 @@ The first assembly interface intentionally supports rigid placement only.
 Revolute, slider, cylindrical, planar, and ball mates—and general numerical
 closed-loop solving—remain future additions. `session.preview_parts` remains a
 separate display-only option when no assembly relationship is intended.
+
+Only fully constrained assemblies can be exported or packaged. `assembly.export`
+writes a solved multi-body STEP and/or STL snapshot to
+`.mcp3d/artifacts/assemblies/<assembly_id>/r<revision>/`; it preserves solved
+geometry placement, not editable mates or occurrence names. `assembly.package`
+writes a ZIP in that same directory containing `assembly.json` (the pinned
+definition and solver evidence), the solved snapshot, and the recipe plus
+neutral geometry for every unique pinned part. The ZIP is a portable local
+handoff file; it does not upload any project data.
 
 ## Local session dashboard
 

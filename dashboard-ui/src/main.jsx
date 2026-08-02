@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { InteractiveModel } from "./InteractiveModel";
 import "./styles.css";
 
 const POLL_INTERVAL_MS = 650;
+const InteractiveModel = lazy(() => import("./InteractiveModel").then((module) => ({ default: module.InteractiveModel })));
 
 function initialTheme() {
   const stored = window.localStorage.getItem("mcp3d-dashboard-theme");
@@ -54,7 +54,9 @@ function RenderPane({ event, selectedImage, setSelectedImage, theme, setTheme, c
         <div className="viewport-corner bottom-left" />
         <div className="viewport-corner bottom-right" />
         {mesh ? (
-          <InteractiveModel mesh={mesh} theme={theme} />
+          <Suspense fallback={<div className="model-overlay">Preparing interactive geometry…</div>}>
+            <InteractiveModel mesh={mesh} theme={theme} />
+          </Suspense>
         ) : image ? (
           <img src={image.url} alt={`${image.name} view of ${subject(event)}`} />
         ) : (
@@ -127,6 +129,7 @@ function EventCard({ event, newest }) {
         </div>
       )}
       {event.details?.artifacts && <p className="artifact-note">CAD deliverables written</p>}
+      {event.details?.package && <p className="artifact-note">Assembly package written</p>}
     </article>
   );
 }

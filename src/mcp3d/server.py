@@ -18,6 +18,8 @@ from .tool_docs import (
     APPLY_DESCRIPTION,
     ASSEMBLY_ANALYZE_DESCRIPTION,
     ASSEMBLY_APPLY_DESCRIPTION,
+    ASSEMBLY_EXPORT_DESCRIPTION,
+    ASSEMBLY_PACKAGE_DESCRIPTION,
     EXPORT_DESCRIPTION,
     MODEL_GUIDE,
     SERVER_INSTRUCTIONS,
@@ -42,6 +44,12 @@ def _mcp_result(result: OperationResult) -> ToolResult:
         structured_content=result.data,
         is_error=result.is_error,
     )
+
+
+def _mcp_error(error: Mcp3dError) -> ToolResult:
+    """Adapt an expected domain failure into an MCP protocol error result."""
+    data = error.as_dict()
+    return ToolResult(content=[data], structured_content=data, is_error=True)
 
 
 @mcp.tool(name="part.apply", description=APPLY_DESCRIPTION)
@@ -73,12 +81,12 @@ def analyze_part(part_id: str, revision: int | None = None, requests: list[dict[
 
 
 @mcp.tool(name="part.export", description=EXPORT_DESCRIPTION)
-def export_part(part_id: str, revision: int | None = None, formats: list[str] | None = None) -> dict[str, Any]:
+def export_part(part_id: str, revision: int | None = None, formats: list[str] | None = None) -> ToolResult:
     """Export a verified immutable revision."""
     try:
         return parts.export(part_id=part_id, revision=revision, formats=formats)
     except Mcp3dError as error:
-        return error.as_dict()
+        return _mcp_error(error)
 
 
 @mcp.tool(name="session.list_parts", description=SESSION_LIST_PARTS_DESCRIPTION)
@@ -126,6 +134,24 @@ def analyze_assembly(
 ) -> ToolResult:
     """Inspect an immutable assembly revision without changing it."""
     return _mcp_result(assemblies.analyze(assembly_id=assembly_id, revision=revision, requests=requests))
+
+
+@mcp.tool(name="assembly.export", description=ASSEMBLY_EXPORT_DESCRIPTION)
+def export_assembly(assembly_id: str, revision: int | None = None, formats: list[str] | None = None) -> ToolResult:
+    """Export a fully constrained assembly as a solved geometry snapshot."""
+    try:
+        return assemblies.export(assembly_id=assembly_id, revision=revision, formats=formats)
+    except Mcp3dError as error:
+        return _mcp_error(error)
+
+
+@mcp.tool(name="assembly.package", description=ASSEMBLY_PACKAGE_DESCRIPTION)
+def package_assembly(assembly_id: str, revision: int | None = None, formats: list[str] | None = None) -> ToolResult:
+    """Create a portable handoff package for a fully constrained assembly."""
+    try:
+        return assemblies.package(assembly_id=assembly_id, revision=revision, formats=formats)
+    except Mcp3dError as error:
+        return _mcp_error(error)
 
 
 @mcp.tool(name="session.list_assemblies", description=SESSION_LIST_ASSEMBLIES_DESCRIPTION)

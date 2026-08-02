@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from mcp3d.errors import Mcp3dError
-from mcp3d.recipe import FeatureGraphRecipe, parse_recipe
+from mcp3d.recipe import FeatureGraphRecipe, apply_replace_patch, parse_recipe
 
 
 class RecipeParserTests(unittest.TestCase):
@@ -37,4 +37,17 @@ class RecipeParserTests(unittest.TestCase):
         for raw, code in cases:
             with self.subTest(code=code), self.assertRaisesRegex(Mcp3dError, ".*") as raised:
                 parse_recipe(raw)
+            self.assertEqual(raised.exception.code, code)
+
+    def test_malformed_patch_operations_raise_structured_errors(self) -> None:
+        recipe = {"parameters": {"size": 10}, "operations": []}
+        cases = [
+            (["not an operation"], "INVALID_PATCH"),
+            ([{"op": "replace", "path": "/parameters/not-an-index/0", "value": 1}], "INVALID_PATCH"),
+            ([{"op": "replace", "path": "/operations/nope", "value": 1}], "INVALID_PATCH"),
+            ([{"op": "replace", "path": "/parameters/~2size", "value": 1}], "INVALID_PATCH"),
+        ]
+        for patch, code in cases:
+            with self.subTest(patch=patch), self.assertRaises(Mcp3dError) as raised:
+                apply_replace_patch(recipe.copy(), patch)  # type: ignore[arg-type]
             self.assertEqual(raised.exception.code, code)

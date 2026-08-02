@@ -19,6 +19,21 @@ from tests.recipes import FEATURE_GRAPH_RECIPE
 
 
 class DashboardProjectionTests(TestCase):
+    def test_package_deliverable_is_retained_in_dashboard_details(self) -> None:
+        projection = DashboardProjection()
+        projection.record(OperationMilestone(
+            action="package",
+            phase="completed",
+            part_id=None,
+            assembly_id="fixture",
+            revision=1,
+            status="ok",
+            message="Package complete.",
+            result={"package": "/tmp/fixture.zip"},
+        ))
+
+        self.assertEqual(projection.snapshot()["events"][0]["details"], {"package": "/tmp/fixture.zip"})
+
     def test_assembly_service_publishes_assembly_activity(self) -> None:
         projection = DashboardProjection()
         store = InMemoryPartStore()

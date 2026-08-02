@@ -11,7 +11,8 @@ from ..artifacts import export_revision
 from ..cad import FeatureGraphCompiler
 from ..errors import Mcp3dError
 from ..identity import PartId
-from ..models import OperationResult, Part, RenderedImage, Revision
+from ..immutability import thaw
+from ..models import OperationResult, RenderedImage, Revision
 from ..recipe import FeatureGraphRecipe, apply_replace_patch, parse_recipe
 from ..rendering import RenderService
 from ..reporting import (
@@ -19,6 +20,7 @@ from ..reporting import (
     apply_views,
     report,
     requested_views,
+    validate_part_requirements,
 )
 from .observation import OperationMilestone, OperationObserver
 from .store import InMemoryPartStore
@@ -217,7 +219,7 @@ class PartService:
                 raise Mcp3dError("RECIPE_REQUIRED", "A new part requires a complete recipe.")
             if base_revision is not None:
                 raise Mcp3dError("REVISION_CONFLICT", "A new part cannot specify base_revision.")
-            candidate, inherited_requirements, part = copy.deepcopy(recipe), {}, Part(part_id)
+            candidate, inherited_requirements = copy.deepcopy(recipe), {}
         else:
             head = existing.revisions[-1]
             if base_revision != head.number:
@@ -228,13 +230,10 @@ class PartService:
                 candidate = apply_replace_patch(head.recipe.to_dict(), patch)
             else:
                 raise Mcp3dError("EDIT_REQUIRED", "Supply a recipe or patch when revising a part.")
-            inherited_requirements, part = copy.deepcopy(head.requirements), existing
+            inherited_requirements = thaw(head.requirements)
         if requirements is not None:
-            inherited_requirements = copy.deepcopy(requirements)
+            inherited_requirements = copy.deepcopy(validate_part_requirements(requirements))
         parsed_recipe = parse_recipe(candidate)
         built = self.compiler.compile(parsed_recipe)
-        number = len(part.revisions) + 1
-        revision = Revision(number, parsed_recipe, inherited_requirements, built.shape, built.sketches, built.mate_connectors)
-        part.revisions.append(revision)
-        self.store.save(part)
-        return revision
+        pending = Revision(0, parsed_recipe, inherited_requirements, built.shape, built.sketches, built.mate_connectors)
+        return self.store.commit_part_revision(part_id, base_revision, pending)

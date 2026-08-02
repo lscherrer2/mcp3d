@@ -32,7 +32,10 @@ SERVER_INSTRUCTIONS = _doc(
     Use `assembly.apply` only after the participating part revisions expose
     named connectors. The first assembly workflow supports grounded components
     and rigid `fastened` mates; it does not yet support motion mates or a
-    general closed-loop solver. The full field reference, examples, operation
+    general closed-loop solver. After a fully constrained review,
+    `assembly.export` writes a neutral solved-geometry snapshot and
+    `assembly.package` creates a portable ZIP with the assembly definition and
+    pinned component recipes. The full field reference, examples, operation
     ordering rules, and repair guidance are available as the `mcp3d://guide`
     resource. Read it before authoring an unfamiliar feature type.
     """
@@ -112,6 +115,45 @@ ASSEMBLY_ANALYZE_DESCRIPTION = _doc(
     expected:[x,y,z]}` in the assembly's declared unit. The result includes
     pinned part references, solved poses, each mate's residual, remaining
     degrees of freedom, and any free components.
+    """
+)
+
+
+ASSEMBLY_EXPORT_DESCRIPTION = _doc(
+    """
+    Export a fully constrained immutable assembly revision as a solved neutral
+    geometry snapshot. `assembly_id` is required; omit `revision` for the
+    assembly head. `formats` is `["step"]`, `["stl"]`, or both (default:
+    STEP). The assembly must have zero remaining degrees of freedom: ground
+    one instance in every connected component and repair mate conflicts before
+    exporting.
+
+    The result returns exact local artifact paths under the configured artifact
+    root at `assemblies/<assembly_id>/r<revision>/`. STEP preserves the solved
+    multi-body B-rep placement; STL is a tessellated snapshot. This is a
+    geometry snapshot, not an editable assembly exchange: it does not retain
+    mate behavior, connector semantics, occurrence names, or revision history.
+    Export never changes the saved assembly or any part revision.
+    """
+)
+
+
+ASSEMBLY_PACKAGE_DESCRIPTION = _doc(
+    """
+    Create a portable ZIP handoff for a fully constrained immutable assembly
+    revision. `assembly_id` is required; omit `revision` for the assembly
+    head. `formats` controls the neutral geometry included for the solved
+    assembly snapshot and each unique pinned component: `["step"]`,
+    `["stl"]`, or both (default: STEP).
+
+    The ZIP is written beside assembly exports under the configured artifact
+    root. It contains `assembly.json` with the pinned assembly definition and
+    solver evidence, `snapshot/assembly.<format>` for the solved geometry, and
+    `parts/<part_id>/r<revision>/recipe.json` plus each component's exported
+    geometry. Repeated occurrences reference a single pinned component payload
+    through the definition. This package is a local, portable handoff file;
+    it does not upload or share data remotely and does not preserve motion
+    behavior beyond the recorded assembly definition.
     """
 )
 
@@ -357,7 +399,10 @@ MODEL_GUIDE = _doc(
        on apply when a specific orthographic view is needed. Request
        `render_sketch` for any important constrained sketch.
     4. Revise from the returned revision number until checks and images agree.
-    5. Export verified STEP and, where needed, STL.
+    5. Export verified STEP and, where needed, STL. For a fully constrained
+       assembly, use `assembly.export` for a solved geometry snapshot or
+       `assembly.package` for a portable handoff with the pinned component
+       recipes.
 
     Use semantic operation names such as `base`, `mounting_boss`,
     `mount_hole`, and `top_round`. Put dimensions likely to change in
@@ -443,7 +488,13 @@ MODEL_GUIDE = _doc(
     semantic `changes`: `add_instance`, `remove_instance`, `replace_part`,
     `add_mate`, `remove_mate`, `ground`, and `unground`. Use
     `assembly.analyze` to inspect the saved revision and the assertions
-    `fully_constrained`, `instance_count`, or `bounding_box`.
+    `fully_constrained`, `instance_count`, or `bounding_box`. Once it is fully
+    constrained, `assembly.export` writes a STEP/STL solved-geometry snapshot.
+    `assembly.package` writes a portable ZIP containing that snapshot,
+    `assembly.json` (definition, pinned revisions, and solver evidence), and
+    the recipe plus neutral geometry for each unique pinned part. Neither
+    export format carries live mate behavior; the ZIP's definition is the
+    editable handoff record.
 
     ## Fully constrained rectangle example
 

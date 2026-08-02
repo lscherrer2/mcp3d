@@ -2,15 +2,91 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from .errors import Mcp3dError
+from .immutability import thaw
 from .models import Revision
 
 
 ALLOWED_VIEWS = {"isometric", "top", "front", "right"}
 DEFAULT_APPLY_VIEWS = ("isometric",)
 DEFAULT_ANALYZE_VIEWS = ("isometric", "top", "front", "right")
+
+
+def validate_part_requirements(requirements: Any) -> dict[str, Any]:
+    """Validate persisted part acceptance criteria before a revision is committed."""
+    if not isinstance(requirements, dict) or set(requirements) != {"assertions"}:
+        raise Mcp3dError("INVALID_REQUIREMENTS", "requirements must contain only an assertions list.")
+    assertions = requirements["assertions"]
+    if not isinstance(assertions, list):
+        raise Mcp3dError("INVALID_REQUIREMENTS", "requirements.assertions must be a list.")
+    for criterion in assertions:
+        _validate_part_assertion(criterion)
+    return requirements
+
+
+def validate_assembly_requirements(requirements: Any) -> dict[str, Any]:
+    """Validate persisted assembly acceptance criteria before a revision is committed."""
+    if not isinstance(requirements, dict) or set(requirements) != {"assertions"}:
+        raise Mcp3dError("INVALID_REQUIREMENTS", "requirements must contain only an assertions list.")
+    assertions = requirements["assertions"]
+    if not isinstance(assertions, list):
+        raise Mcp3dError("INVALID_REQUIREMENTS", "requirements.assertions must be a list.")
+    for criterion in assertions:
+        _validate_assembly_assertion(criterion)
+    return requirements
+
+
+def _validate_part_assertion(criterion: Any) -> None:
+    if not isinstance(criterion, Mapping):
+        raise Mcp3dError("INVALID_REQUIREMENTS", "Each assertion must be an object.")
+    _validate_identifier(criterion)
+    kind = criterion.get("kind")
+    if kind == "solid_valid":
+        _validate_expected_bool(criterion)
+    elif kind == "bounding_box":
+        _validate_bounding_box(criterion)
+    else:
+        raise Mcp3dError("INVALID_REQUIREMENTS", f"Unsupported part assertion {kind!r}.")
+
+
+def _validate_assembly_assertion(criterion: Any) -> None:
+    if not isinstance(criterion, dict):
+        raise Mcp3dError("INVALID_REQUIREMENTS", "Each assertion must be an object.")
+    _validate_identifier(criterion)
+    kind = criterion.get("kind")
+    if kind == "fully_constrained":
+        _validate_expected_bool(criterion)
+    elif kind == "instance_count":
+        expected = criterion.get("expected")
+        if not isinstance(expected, int) or isinstance(expected, bool) or expected < 0:
+            raise Mcp3dError("INVALID_REQUIREMENTS", "instance_count.expected must be a non-negative integer.")
+    elif kind == "bounding_box":
+        _validate_bounding_box(criterion)
+    else:
+        raise Mcp3dError("INVALID_REQUIREMENTS", f"Unsupported assembly assertion {kind!r}.")
+
+
+def _validate_identifier(criterion: dict[str, Any]) -> None:
+    if not isinstance(criterion.get("kind"), str):
+        raise Mcp3dError("INVALID_REQUIREMENTS", "Each assertion requires a string kind.")
+    if "id" in criterion and not isinstance(criterion["id"], str):
+        raise Mcp3dError("INVALID_REQUIREMENTS", "Assertion ids must be strings when supplied.")
+
+
+def _validate_expected_bool(criterion: dict[str, Any]) -> None:
+    if "expected" in criterion and not isinstance(criterion["expected"], bool):
+        raise Mcp3dError("INVALID_REQUIREMENTS", f"{criterion['kind']}.expected must be a boolean.")
+
+
+def _validate_bounding_box(criterion: dict[str, Any]) -> None:
+    expected = criterion.get("expected")
+    if not isinstance(expected, list) or len(expected) != 3 or any(
+        not isinstance(value, int | float) or isinstance(value, bool) for value in expected
+    ):
+        raise Mcp3dError("INVALID_REQUIREMENTS", "bounding_box.expected must be a three-number list.")
 
 
 def apply_views(render: dict[str, Any] | None) -> list[str]:
@@ -103,6 +179,8 @@ def report(part_id: str, revision: Revision, assertions: list[dict[str, Any]]) -
 
 def check(revision: Revision, criterion: dict[str, Any], dimensions: list[float]) -> dict[str, Any]:
     """Evaluate one exact assertion without changing the revision."""
+    if not isinstance(criterion, Mapping):
+        return {"id": None, "kind": None, "status": "not_evaluated", "reason": "Assertions must be objects."}
     kind, identifier = criterion.get("kind"), criterion.get("id", criterion.get("kind"))
     if kind == "solid_valid":
         actual, expected = revision.shape.is_valid and len(revision.shape.solids()) == 1, criterion.get("expected", True)
@@ -110,5 +188,13 @@ def check(revision: Revision, criterion: dict[str, Any], dimensions: list[float]
         actual, expected = dimensions, criterion.get("expected")
     else:
         return {"id": identifier, "kind": kind, "status": "not_evaluated", "reason": "Unsupported assertion."}
-    passed = actual == expected if kind != "bounding_box" else actual == [float(value) for value in expected]
-    return {"id": identifier, "kind": kind, "status": "pass" if passed else "fail", "expected": expected, "actual": actual}
+    if kind == "bounding_box":
+        passed = (
+            isinstance(expected, list | tuple)
+            and len(expected) == 3
+            and all(isinstance(value, int | float) and not isinstance(value, bool) for value in expected)
+            and actual == [float(value) for value in expected]
+        )
+    else:
+        passed = actual == expected
+    return {"id": identifier, "kind": kind, "status": "pass" if passed else "fail", "expected": thaw(expected), "actual": actual}

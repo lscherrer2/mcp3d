@@ -25,6 +25,8 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
                     "session.preview_parts",
                     "assembly.apply",
                     "assembly.analyze",
+                    "assembly.export",
+                    "assembly.package",
                     "session.list_assemblies",
                 },
             )
@@ -36,10 +38,24 @@ class McpContractTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("independent", tools["session.preview_parts"].description)
             self.assertIn("fastened", tools["assembly.apply"].description)
             self.assertIn("fully_constrained", tools["assembly.analyze"].description)
+            self.assertIn("snapshot", tools["assembly.export"].description)
+            self.assertIn("portable", tools["assembly.package"].description)
             resources = await client.list_resources()
             self.assertEqual([str(resource.uri) for resource in resources], ["mcp3d://guide"])
             guide = await client.read_resource("mcp3d://guide")
             self.assertIn("Fully constrained rectangle example", guide[0].text)
+
+    async def test_export_failures_are_mcp_errors_with_structured_recovery(self) -> None:
+        async with Client(mcp) as client:
+            for tool_name, arguments, code in (
+                ("part.export", {"part_id": "missing_part"}, "PART_NOT_FOUND"),
+                ("assembly.export", {"assembly_id": "missing_assembly"}, "ASSEMBLY_NOT_FOUND"),
+                ("assembly.package", {"assembly_id": "missing_assembly"}, "ASSEMBLY_NOT_FOUND"),
+            ):
+                with self.subTest(tool_name=tool_name):
+                    result = await client.call_tool(tool_name, arguments, raise_on_error=False)
+                    self.assertTrue(result.is_error)
+                    self.assertEqual(result.structured_content["code"], code)
 
     async def test_create_verify_revise_and_analyze_a_feature_graph_part(self) -> None:
         async with Client(mcp) as client:

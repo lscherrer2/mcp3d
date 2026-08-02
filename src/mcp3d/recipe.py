@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from .errors import Mcp3dError
@@ -59,6 +60,9 @@ class FeatureOperation:
     kind: str
     fields: Mapping[str, Any]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "fields", MappingProxyType(copy.deepcopy(dict(self.fields))))
+
     def get(self, name: str, default: Any = None) -> Any:
         return self.fields.get(name, default)
 
@@ -73,6 +77,9 @@ class MateConnectorDefinition:
     identifier: str
     fields: Mapping[str, Any]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "fields", MappingProxyType(copy.deepcopy(dict(self.fields))))
+
     def to_dict(self) -> dict[str, Any]:
         return {"id": self.identifier, **copy.deepcopy(dict(self.fields))}
 
@@ -85,6 +92,11 @@ class FeatureGraphRecipe:
     parameters: Mapping[str, float]
     operations: tuple[FeatureOperation, ...]
     mate_connectors: tuple[MateConnectorDefinition, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
+        object.__setattr__(self, "operations", tuple(self.operations))
+        object.__setattr__(self, "mate_connectors", tuple(self.mate_connectors))
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -236,23 +248,61 @@ class RecipeValues:
 
 def apply_replace_patch(recipe: dict[str, Any], patch: list[dict[str, Any]]) -> dict[str, Any]:
     """Apply the intentionally narrow JSON Patch dialect exposed by the recipe model."""
+    if not isinstance(patch, list):
+        raise Mcp3dError("INVALID_PATCH", "patch must be a list of replace operations.")
     for operation in patch:
+        if not isinstance(operation, dict):
+            raise Mcp3dError("INVALID_PATCH", "Each patch operation must be an object.")
         if operation.get("op") != "replace":
             raise Mcp3dError("UNSUPPORTED_PATCH", "Only JSON Patch 'replace' operations are supported.")
         path = operation.get("path")
-        if not isinstance(path, str) or not path.startswith("/"):
+        if not isinstance(path, str) or not path.startswith("/") or path == "/":
             raise Mcp3dError("INVALID_PATCH", "Patch paths must start with '/'.")
         target: Any = recipe
-        tokens = path[1:].split("/")
+        tokens = [_decode_patch_token(token, path) for token in path[1:].split("/")]
         for token in tokens[:-1]:
-            target = target[int(token)] if isinstance(target, list) else target.get(token)
-            if target is None:
+            if isinstance(target, list):
+                index = _patch_index(token, path)
+                if index >= len(target):
+                    raise Mcp3dError("INVALID_PATCH", f"Patch path {path!r} does not exist.")
+                target = target[index]
+            elif isinstance(target, dict):
+                if token not in target:
+                    raise Mcp3dError("INVALID_PATCH", f"Patch path {path!r} does not exist.")
+                target = target[token]
+            else:
                 raise Mcp3dError("INVALID_PATCH", f"Patch path {path!r} does not exist.")
         final = tokens[-1]
-        if isinstance(target, list) and final.isdigit() and int(final) < len(target):
-            target[int(final)] = operation.get("value")
+        if isinstance(target, list):
+            index = _patch_index(final, path)
+            if index >= len(target):
+                raise Mcp3dError("INVALID_PATCH", f"Patch path {path!r} does not exist.")
+            target[index] = operation.get("value")
         elif isinstance(target, dict) and final in target:
             target[final] = operation.get("value")
         else:
             raise Mcp3dError("INVALID_PATCH", f"Patch path {path!r} does not exist.")
     return recipe
+
+
+def _decode_patch_token(token: str, path: str) -> str:
+    """Decode the RFC 6901 escapes and reject malformed escape sequences."""
+    decoded: list[str] = []
+    index = 0
+    while index < len(token):
+        character = token[index]
+        if character != "~":
+            decoded.append(character)
+            index += 1
+        elif index + 1 < len(token) and token[index + 1] in {"0", "1"}:
+            decoded.append("~" if token[index + 1] == "0" else "/")
+            index += 2
+        else:
+            raise Mcp3dError("INVALID_PATCH", f"Patch path {path!r} contains an invalid JSON Pointer escape.")
+    return "".join(decoded)
+
+
+def _patch_index(token: str, path: str) -> int:
+    if not token.isdigit():
+        raise Mcp3dError("INVALID_PATCH", f"Patch path {path!r} uses a non-numeric array index.")
+    return int(token)

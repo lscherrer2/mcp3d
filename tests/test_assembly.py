@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 import unittest
 
 from mcp3d.application import AssemblyService, PartService
 from mcp3d.application.store import InMemoryPartStore
+from mcp3d.errors import Mcp3dError
+from mcp3d.identity import AssemblyId
 
 
 class AssemblyServiceTests(unittest.TestCase):
@@ -93,6 +96,11 @@ class AssemblyServiceTests(unittest.TestCase):
         self.assertEqual(result.data["summary"]["solid_count"], 2)
         self.assertEqual(result.data["summary"]["bounding_box_mm"], [10.0, 8.0, 3.0])
         self.assertEqual(result.data["instances"][1]["resolved_pose"]["origin_mm"], [2.0, 2.0, 2.0])
+        revision = self.store.get_assembly_revision(AssemblyId.parse("enclosure"), 1)
+        with self.assertRaises(FrozenInstanceError):
+            revision.number = 2  # type: ignore[misc]
+        with self.assertRaises(TypeError):
+            revision.build.diagnostics["status"] = "changed"  # type: ignore[index]
 
     def test_assembly_revisions_remain_pinned_and_failed_revision_is_not_committed(self) -> None:
         self._create_two_parts()
@@ -176,6 +184,23 @@ class AssemblyServiceTests(unittest.TestCase):
         )
         self.assertFalse(grounded.is_error, grounded.data)
         self.assertEqual(grounded.data["instances"][0]["resolved_pose"]["origin_mm"], [25.4, 0.0, 0.0])
+
+    def test_export_rejects_an_assembly_with_remaining_degrees_of_freedom(self) -> None:
+        self._apply_part("plate", self._base_recipe())
+        created = self.assemblies.apply(
+            assembly_id="floating",
+            definition={"instances": [{"id": "plate", "part_id": "plate"}], "mates": []},
+            changes=None,
+            base_revision=None,
+            requirements=None,
+            render={"views": []},
+        )
+        self.assertFalse(created.is_error, created.data)
+
+        with self.assertRaises(Mcp3dError) as raised:
+            self.assemblies.export(assembly_id="floating", revision=1, formats=["step"])
+
+        self.assertEqual(raised.exception.code, "ASSEMBLY_NOT_FULLY_CONSTRAINED")
 
     def test_free_mated_component_uses_its_one_explicit_initial_pose_as_anchor(self) -> None:
         self._create_two_parts()
@@ -271,4 +296,18 @@ class AssemblyServiceTests(unittest.TestCase):
 
         self.assertTrue(result.is_error)
         self.assertEqual(result.data["code"], "MATE_UNSATISFIABLE")
+        self.assertEqual(self.store.list_assemblies(), [])
+
+    def test_malformed_requirements_do_not_commit_an_assembly_revision(self) -> None:
+        self._create_two_parts()
+        result = self.assemblies.apply(
+            assembly_id="invalid_requirements",
+            definition=self._definition(),
+            changes=None,
+            base_revision=None,
+            requirements={"assertions": [{"kind": "instance_count", "expected": "two"}]},
+            render={"views": []},
+        )
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.data["code"], "INVALID_REQUIREMENTS")
         self.assertEqual(self.store.list_assemblies(), [])
